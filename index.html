@@ -3311,8 +3311,8 @@ async function load() {
 }
 
 function save() {
-  // Fire-and-forget async save to IndexedDB
-  idbSet(IDB_KEY, JSON.parse(JSON.stringify(S))).catch(e => console.error('Save error', e));
+  // Returns promise — can be awaited when needed
+  return idbSet(IDB_KEY, JSON.parse(JSON.stringify(S))).catch(e => console.error('Save error', e));
 }
 
 function setSdot(visible) {
@@ -3433,10 +3433,13 @@ async function pull() {
       if (changed) {
         S.lastSync = new Date().toISOString();
         migrateFirmFish();
-        save();
+        await save();
         if (currentPage === 'home') renderHome();
         if (currentPage === 'history') { buildFirmFilter(); renderHistoryKeepOpen(); }
         if (currentPage === 'report')  { buildFirmRow(); renderTab(); }
+      } else {
+        // Even if no changes, re-render home to show cached data
+        if (currentPage === 'home') renderHome();
       }
       setSyncBar(false);
       setSdot(false);
@@ -6364,11 +6367,22 @@ async function init() {
     });
   }
 
+  // Check if we have any local data
+  const hasLocalData = S.firms && S.firms.length > 0;
+
   if (navigator.onLine) {
+    if (!hasLocalData) {
+      // First time — show loading, wait for sync
+      setSyncBar(true, 'প্রথমবার লোড হচ্ছে...');
+    }
     setTimeout(doPull, 300);
   } else {
-    setSyncBar(true, 'অফলাইন — লোকাল ডেটা দেখানো হচ্ছে', true);
-    setTimeout(() => setSyncBar(false), 3000);
+    if (!hasLocalData) {
+      setSyncBar(true, 'অফলাইন — কোনো ডেটা নেই। নেট চালু করুন।', true);
+    } else {
+      setSyncBar(true, 'অফলাইন — লোকাল ডেটা দেখানো হচ্ছে', true);
+      setTimeout(() => setSyncBar(false), 3000);
+    }
   }
 
   // When coming back online, auto-sync
