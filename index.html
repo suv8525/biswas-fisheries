@@ -6307,12 +6307,40 @@ function init() {
   renderHome();
   migrateFirmFish();
   try{ history.replaceState({ page: 'home' }, ''); }catch(e){}
-  // Background pull on start
-  if (S.sheetUrl) {
-    setTimeout(() => pull().catch(()=>{}), 800);
-    // Auto-pull every 60s
-    setInterval(() => { if (S.sheetUrl) pull().catch(()=>{}); }, 60000);
+
+  // Pull on start — immediately if online, retry when back online
+  function doPull() {
+    if (!S.sheetUrl) return;
+    setSyncBar(true, 'সিঙ্ক হচ্ছে...');
+    pull().then(() => {
+      setSyncBar(false);
+    }).catch(() => {
+      setSyncBar(true, 'অফলাইন — লোকাল ডেটা দেখানো হচ্ছে', true);
+      setTimeout(() => setSyncBar(false), 3000);
+    });
   }
+
+  if (navigator.onLine) {
+    setTimeout(doPull, 300);
+  } else {
+    setSyncBar(true, 'অফলাইন — লোকাল ডেটা দেখানো হচ্ছে', true);
+    setTimeout(() => setSyncBar(false), 3000);
+  }
+
+  // When coming back online, auto-sync
+  window.addEventListener('online', () => {
+    toast('নেটওয়ার্ক ফিরে এসেছে, সিঙ্ক হচ্ছে...', 'info', 2000);
+    setTimeout(doPull, 500);
+  });
+
+  window.addEventListener('offline', () => {
+    toast('অফলাইন — লোকাল ডেটা থেকে কাজ চলবে', 'warn', 3000);
+  });
+
+  // Auto-pull every 60s when online
+  setInterval(() => {
+    if (S.sheetUrl && navigator.onLine) pull().catch(()=>{});
+  }, 60000);
 }
 
 
