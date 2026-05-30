@@ -2362,7 +2362,7 @@ html, body { height: 100%; overflow: hidden; }
 
 </style>
 </head>
-<body>
+<body onload="init()">
 <div id="app">
 
 <div id="page-home" class="page active">
@@ -3167,6 +3167,45 @@ html, body { height: 100%; overflow: hidden; }
 
 // ═══ SHARED STATE (from Part 1) ═══
 const STORAGE_KEY = 'biswas_v2';
+const IDB_NAME = 'biswas_db';
+const IDB_STORE = 'appdata';
+const IDB_KEY = 'state';
+
+// ── IndexedDB helpers ──
+function openIDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = e => {
+      e.target.result.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function idbGet(key) {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = e => resolve(e.target.result);
+      req.onerror = e => reject(e.target.error);
+    });
+  } catch(e) { return null; }
+}
+
+async function idbSet(key, value) {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const req = tx.objectStore(IDB_STORE).put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror = e => reject(e.target.error);
+    });
+  } catch(e) { console.error('IDB set error', e); }
+}
 let S = {
   firms: [], records: [], weightRecords: [], stockEvents: [], deletedFirmIds: [],
   feedCosts: {}, medCosts: {},
@@ -3239,24 +3278,32 @@ function fmtShort(dateStr) {
   return `${day} ${month}, ${dayName}`;
 }
 
-function load() {
+async function load() {
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbxWQTN75ubYG8Ia4V7-AyuQTx39UZf0B-ynPfzvo_YQUvEVFX9FA-SOkHNYJkaci1UE/exec';
+  const defaults = {
+    firms: [], records: [], weightRecords: [], stockEvents: [],
+    deletedFirmIds: [], feedCosts: {}, medCosts: {},
+    sheetUrl: GAS_URL, lastSync: null
+  };
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      S = Object.assign({
-        firms: [],
-        records: [],
-        weightRecords: [],
-        stockEvents: [],
-        deletedFirmIds: [],
-        feedCosts: {},
-        medCosts: {},
-        sheetUrl: 'https://script.google.com/macros/s/AKfycbxWQTN75ubYG8Ia4V7-AyuQTx39UZf0B-ynPfzvo_YQUvEVFX9FA-SOkHNYJkaci1UE/exec',
-        lastSync: null
-      }, parsed);
-      if(!S.stockEvents) S.stockEvents=[];
-      if(!S.deletedFirmIds) S.deletedFirmIds=[];
+    // Try IndexedDB first
+    let parsed = await idbGet(IDB_KEY);
+    // Fallback to localStorage (migration)
+    if (!parsed) {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        parsed = JSON.parse(raw);
+        // Migrate to IDB
+        await idbSet(IDB_KEY, parsed);
+        localStorage.removeItem(STORAGE_KEY);
+        console.log('Migrated localStorage → IndexedDB');
+      }
+    }
+    if (parsed) {
+      S = Object.assign(defaults, parsed);
+      if (!S.sheetUrl) S.sheetUrl = GAS_URL;
+      if (!S.stockEvents) S.stockEvents = [];
+      if (!S.deletedFirmIds) S.deletedFirmIds = [];
     }
   } catch(e) {
     console.error('Load error', e);
@@ -3264,11 +3311,8 @@ function load() {
 }
 
 function save() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(S));
-  } catch(e) {
-    console.error('Save error', e);
-  }
+  // Fire-and-forget async save to IndexedDB
+  idbSet(IDB_KEY, JSON.parse(JSON.stringify(S))).catch(e => console.error('Save error', e));
 }
 
 function setSdot(visible) {
@@ -6296,8 +6340,8 @@ function seedDemo() {
 }
 
 // ═══ UNIFIED INIT ═══
-function init() {
-  load();
+async function init() {
+  await load();
   seedDemo();
   const LOGO = 'data:image/png;base64,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';
   document.querySelectorAll('.topbar-logo').forEach(el => { el.src = LOGO; });
